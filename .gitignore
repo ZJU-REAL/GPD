@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Env / IDE
+.env
+.venv/
+venv/
+.idea/
+.vscode/
+*.swp
+
+# Data (hosted on Hugging Face)
+data/*
+!data/README.md
+
+# Data (hosted on Hugging Face)
+data/*
+!data/README.md
+
+# Training artifacts
+outputs/
+EasyR1/checkpoints/
+wandb/
+ray_results/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

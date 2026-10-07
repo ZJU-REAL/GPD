@@ -1,0 +1,177 @@
+# GPD Asymmetric Privileged GRPO Configuration
+# Qwen3-VL (2B / 4B)
+#
+# Teacher/Student setup:
+#   - Student: RGB + Query (trainable actor)
+#   - Teacher: priv_context_text + RGB + Query (privileged KL); shares the current actor weights when
+#     algorithm.shared_ref_student_weights=true (GPD), or uses the frozen step-0 model (OPSD baseline)
+# Privileged KL is activated automatically when priv_context_text is non-empty.
+
+data:
+  # Overridden by examples/bash_{2b,4b}/*.sh (defaults to ../data/mixed_15k_privfix)
+  train_files: ../data/mixed_15k_privfix/text_routed_train.parquet
+  val_files: ../data/mixed_15k_privfix/text_routed_val.parquet
+  prompt_key: prompt
+  answer_key: answer
+  image_key: images
+  video_key: videos
+  # Overridden to absolute path of data/frames via gpd_env.sh (FRAMES_DIR)
+  image_dir: null
+  video_fps: 2.0
+  # Upper bound for raw_prompt_ids truncation (text-only ~100-200 tokens are not affected by this limit)
+  # When multimodal_keep_full_len=True, post_max=max(this value, len(input_ids))
+  # Must be < actual input_ids length (~5000); otherwise the sequence will be forcibly padded to this value, causing OOM
+  max_prompt_length: 2048
+  max_response_length: 1024
+  rollout_batch_size: 128  # 128 * n=8 = 1024 trajectories/step
+  mini_rollout_batch_size: 2   # requires ceil(128/2)=64 concat calls to fill a batch
+  val_batch_size: 32
+  format_prompt: null       # GPD prompt already pre-formatted in parquet
+  override_chat_template: null
+  shuffle: true
+  seed: 42
+  min_pixels: 196608        # approx 443x443 (original 512x512)
+  max_pixels: 262144        # 512x512 (original approx 627x627)
+  filter_overlong_prompts: false
+  # True: Student and Teacher share the same CoT user structure (Question+Think+MCA_POST); Student has no scene block, system prompt does not mention privilege;
+  #       Teacher/ref follows vsi_text_cot_eval + priv_context_text
+  # Requires samples to contain conversations or a parsable prompt; Teacher KL requires the priv_context_text column (may be empty string)
+  use_vsi_zeroshot_prompts: true
+  # teacher_prompt_answer_only: false  # true: Teacher system omits 3D context; uses only frames + <reference_answer> (paired with answer-only privilege)
+
+algorithm:
+  adv_estimator: grpo
+  # true: asymmetric Teacher + privileged KL (high-reward trajectories only, etc.); false: standard GRPO, ref=Student trajectory, use_kl_loss can apply beta*KL inside the loss
+  privileged_rl: true
+  disable_kl: false
+  use_kl_loss: true         # True: KL is part of actor loss; False with disable_kl=false: KL is applied as reward penalty (apply_kl_penalty)
+  kl_penalty: low_var_kl    # same family as TRL low-var KL; shared by both standard and privileged paths
+  kl_coef: 0.01             # beta; privileged path aligns with BiPS; can be overridden in scripts for standard GRPO
+  kl_clip: 0.3              # only active when privileged_rl=true; standard beta*KL does not use this clip
+  # kl_clip_symmetric: false  # true: clips privileged KL loss to [-kl_clip, +kl_clip]; false (default): only max=kl_clip
+  # privileged_kl_only_on_correct: true   # false: privileged KL also applies to incorrect trajectories (default true matches BiPS)
+  # privileged_kl_only_on_incorrect: false # true: privileged KL applies only to incorrect trajectories (mutually exclusive with above; this takes priority; default off)
+  # Incorrect sequences are weighted by their per-sequence mean KLD (same as kl_penalty, typically low_var_kl): larger gap -> higher privileged KL weight (linear ramp over [tau, cap]).
+  # privileged_kl_adaptive_incorrect_low_var: false   # True: each incorrect sequence is scaled by weight in [0,1] (requires privileged_kl_only_on_incorrect)
+  # privileged_kl_incorrect_low_var_tau: 0.10
+  # privileged_kl_incorrect_low_var_cap: 0.28         # linear mode requires cap > tau; step mode can ignore cap
+  # privileged_kl_adaptive_incorrect_scale_min: 0.0   # along with scale_max: when style=mask, defines mask multiplier range; when style=kl_coef, defines eff_kl_coef range (algorithm.kl_coef does not apply in this case)
+  # privileged_kl_adaptive_incorrect_scale_max: 1.0
+  # privileged_kl_adaptive_incorrect_style: mask   # mask: scale incorrect token mask per sequence; kl_coef: binary mask, gap->eff_kl_coef in [min,max] multiplied into kl_loss
+  # split_grpo_pg_opd_kl: false           # true: correct->GRPO(PG) only, incorrect->privileged KL(OPD) only; auto-KL on incorrect only; recommended together with privileged_rl and use_kl_loss
+  # opsd_privileged_kl_only_no_grpo: false # true: OPSD pure distillation (full Student + frozen ref Teacher + full-vocab KL + per-token clip)
+  # opsd_jsd_token_clip: 0.05               # OPSD mode per-token KL upper bound (official --jsd_token_clip); auto-sets kl_coef=1, disables batch kl_clip
+  shared_ref_student_weights: true      # Teacher/ref_log_probs share actor weights with student; when use_frozen_base_kl is also enabled, an additional frozen ref is loaded
+  use_frozen_base_kl: true              # adds KL(pi || pi_ref_frozen) on top of privileged KL (Student trajectories only)
+  frozen_base_kl_coef: 0.01             # KL coefficient for the frozen base reference (independent of kl_coef); must be >0 when use_frozen_base_kl is enabled
+  # Length-aware privileged KL (prevents length collapse): sequences with response length below this threshold have privileged KL disabled entirely; <=0 to disable.
+  # Recommended value: ~60-80% of the baseline response length at the same training stage (e.g. set 80-100 when baseline ~140).
+  priv_kl_short_threshold: 0
+  # opd_correct_reward_threshold: 0.5     # correctness threshold (last-token reward >= this value counts as correct, eligible for PG)
+  # entropy_penalty_coef: 0.0           # >0: penalizes mean(-log pi) to mitigate entropy/surprisal increase during training (full DVRP requires mask/noise views)
+  # kl_teacher_confidence_weight_beta: 0.0  # >0: weights KL token-wise by exp(beta*ref_logprob) (a tractable proxy for the SRPO teacher entropy idea)
+  # kl_teacher_disconfidence_weight_gamma: 0.0  # >0 and batch contains token_level_rewards: incorrect sequences additionally multiplied by exp(-gamma*ref_logprob); compatible with beta
+  # privileged_kl_tip_q1_q3_mask: false  # true: privileged KL applies only to TIP-defined Q1 union Q3 tokens (see verl/utils/tip_opd.py)
+  # privileged_kl_tip_entropy_chunk_size: 256
+  # privileged_kl_teacher_entropy_reweight: false  # true: for incorrect sequences, compute median Teacher H/lnV over current kl_mask; low entropy retains privileged KL, high entropy disables it (TIP-style; skipped if <2 valid positions); requires privileged_rl + use_kl_loss
+  # privileged_kl_sdar_sigmoid_gate: false  # true: replaces privileged KL with SDAR compute_sdar_loss; requires privileged_rl; mutually exclusive with SRPO beta/gamma
+  # privileged_kl_sdar_gate_beta: 5.0
+  # privileged_kl_full_vocab: false       # true: privileged KL uses full-vocab KL(pi_T || pi_S) (OPSD-style); false (default): uses low_var_kl on rollout-sampled tokens only
+  # privileged_kl_full_vocab_chunk_size: 256
+  online_filtering: false
+  filter_key: overall
+  filter_low: 0.01
+  filter_high: 0.99
+
+worker:
+  actor:
+    global_batch_size: 128   # aligned with rollout_batch_size
+    micro_batch_size_per_device_for_update: 1
+    micro_batch_size_per_device_for_experience: 2
+    max_grad_norm: 1.0
+    loss_avg_mode: token
+    padding_free: true
+    dynamic_batching: true
+    ulysses_size: 1
+    loss_type: default
+    ppo_epochs: 1
+    model:
+      model_path: Qwen/Qwen3-VL-4B-Instruct  # <- or your local checkpoint path
+      enable_gradient_checkpointing: true
+      trust_remote_code: false
+      freeze_vision_tower: false
+    optim:
+      lr: 1.0e-6
+      weight_decay: 1.0e-2
+      strategy: adamw_bf16
+      lr_warmup_ratio: 0.0
+    fsdp:
+      torch_dtype: bf16
+      enable_full_shard: false
+      enable_cpu_offload: false
+      enable_rank0_init: false   # each rank loads independently from disk in parallel, avoiding broadcast timeout caused by rank0 exclusive loading
+      fsdp_size: -1
+    offload:
+      offload_params: false
+      offload_optimizer: false
+
+  rollout:
+    n: 8                         # GRPO group size (proposal: 8 trajectories per query)
+    # must cover the longest sequence in practice (experiment_log: teacher_ref_input_ids_width~8530; keep some margin)
+    max_model_len: 10240
+    temperature: 1.0
+    top_p: 0.95
+    limit_images: 0
+    gpu_memory_utilization: 0.40   # slightly raises vLLM memory ceiling; if still tight, try 0.38-0.42
+    enforce_eager: true
+    enable_chunked_prefill: false
+    tensor_parallel_size: 1
+    disable_tqdm: false
+    val_override_config:
+      temperature: 0.01
+      top_p: 0.95
+      n: 1
+
+  ref:
+    fsdp:
+      enable_full_shard: false
+      enable_cpu_offload: false
+      enable_rank0_init: false
+      fsdp_size: -1
+    offload:
+      offload_params: false
+
+  reward:
+    reward_type: batch
+    reward_function: ./examples/reward_function/gpd.py:compute_score
+    # Length soft reward (prevents length collapse): applies a negative reward when response_length < length_target, up to -length_pen.
+    # Set length_pen=0 to disable; typical values: length_target=100, length_pen=0.1 (half the target length incurs at most -0.1, roughly 10% weight relative to acc=1.0).
+    reward_function_kwargs:
+      length_target: 0
+      length_pen: 0.0
+
+trainer:
+  total_epochs: 2
+  max_steps: null
+  project_name: gpd
+  experiment_name: gpd_privileged_grpo
+  logger: ["file"]
+  nnodes: 1
+  n_gpus_per_node: 1
+  max_try_make_batch: 80   # >= ceil(128/2)=64; leave extra margin when using online_filter
+  val_freq: 20
+  val_before_train: true
+  val_only: false
+  val_generations_to_log: 5
+  train_rollout_samples_to_log: 5
+  # KL/entropy for incorrect trajectories: written to privileged_kl_entropy/ (compatible with offline export); disabled by default
+  log_privileged_kl_entropy: false
+  log_privileged_kl_entropy_every_n_steps: 1
+  log_privileged_kl_entropy_max_samples_per_step: 64  # deduplicated by uid, at most 1 incorrect trajectory per prompt
+  log_privileged_kl_entropy_incorrect_only: true
+  save_freq: 10
+  save_limit: -1  # old checkpoints are not deleted automatically
+  save_model_only: false
+  save_checkpoint_path: null
+  load_checkpoint_path: null
+  find_last_checkpoint: true
