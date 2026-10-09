@@ -90,6 +90,19 @@ cd EasyR1
 python scripts/model_merger.py --local_dir ../outputs/checkpoint_4b_gpd/global_step_111/actor
 ```
 
+## ⭐️ Citation
+
+If you find this project useful, welcome to cite us.
+
+```bibtex
+@article{li2026gpd,
+  title={Distilling Routed 3D Privilege for Spatial Reasoning in Vision-Language Models},
+  author={Li, Hongxing and Li, Yixin and Li, Dingming and Wang, Zixuan and Yan, Yuchen and Zhang, Wenqi and Lu, Weiming and Shen, Yongliang},
+  journal={arXiv preprint arXiv:2610.12355},
+  year={2026}
+}
+```
+
 ## 🤝 Acknowledgement
 
 This project builds on [EasyR1](https://github.com/hiyouga/EasyR1) and [verl](https://github.com/volcengine/verl), with training data from VSI-Bench, SPAR, MindCube, and ScanNet. We thank the authors of those projects. Code follows the upstream EasyR1 / verl licenses; data subsets retain the terms of their original sources.
