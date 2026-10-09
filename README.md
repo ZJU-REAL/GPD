@@ -1,7 +1,7 @@
 # GPD: Distilling Routed 3D Privilege for Spatial Reasoning in Vision-Language Models
 
 <p align="center">
-  <img src="https://img.shields.io/badge/arXiv-GPD-b31b1b?logo=arxiv&logoColor=white" alt="arXiv">
+  <a href="https://arxiv.org/abs/2610.12355"><img src="https://img.shields.io/badge/arXiv-GPD-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
   <a href="https://huggingface.co/xinyili0624/GPD-2B"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Model-GPD--2B-ffc107?color=ffc107&logoColor=white" alt="HF Model 2B"></a>
   <a href="https://huggingface.co/xinyili0624/GPD-4B"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Model-GPD--4B-ffc107?color=ffc107&logoColor=white" alt="HF Model 4B"></a>
   <a href="https://huggingface.co/datasets/xinyili0624/GPD-15k"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Data-GPD--15k-ffc107?color=ffc107&logoColor=white" alt="HF Data"></a>
